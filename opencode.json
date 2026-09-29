@@ -1,0 +1,16 @@
+{
+  "mcp": {
+    "servers": {
+      "axon-c-production": {
+        "type": "remote",
+        "url": "https://axon-execution-mcp-production.up.railway.app/mcp",
+        "oauth": false
+      },
+      "axon-c-candidate": {
+        "type": "remote",
+        "url": "https://axon-execution-mcp-candidate.up.railway.app/mcp",
+        "oauth": false
+      }
+    }
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "name": "Axon Orchestrator",
+  "customizations": {
+    "codespaces": {
+      "repositories": {
+        "tvnv/axon-execution-mcp": {
+          "permissions": {
+            "contents": "write",
+            "pull_requests": "write",
+            "issues": "write"
+          }
+        },
+        "tvnv/Axon-stabilizer": {
+          "permissions": {
+            "contents": "write",
+            "pull_requests": "write",
+            "issues": "write"
+          }
+        },
+        "tvnv/axon-openclaw": {
+          "permissions": {
+            "contents": "write",
+            "pull_requests": "write",
+            "issues": "write"
+          }
+        },
+        "tvnv/echoline-sovereign": {
+          "permissions": {
+            "contents": "write",
+            "pull_requests": "write",
+            "issues": "write"
+          }
+        }
+      }
+    }
+  }
+}
