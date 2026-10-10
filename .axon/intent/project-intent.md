@@ -133,3 +133,40 @@ La revue de fin de WAVE doit répondre, preuves à l'appui :
 - Distinguer clairement **intention**, **preuve d'implémentation**, **résultat de test** et **hypothèse**.
 - Ne pas réécrire les intentions à chaque WAVE ; mettre à jour à cadence maîtrisée et à chaque nouvel arbitrage explicite.
 - En cas de contradiction, préférer la décision explicite la plus récente ; signaler les ambiguïtés à l'HITL plutôt que les résoudre par invention.
+
+## 10. Arbitrage du 10/10/2026 — WAVE courtes, enchaînement autonome et revue de convergence
+
+**Statut : actif — décision explicite HITL du 10/10/2026.** Cette section prévaut sur les formulations antérieures qui associaient la continuité à une WAVE longue ou qui réservaient toute revue indépendante à GPT.
+
+### Intention
+
+Remplacer les WAVE longues par des **WAVE courtes et cohérentes fonctionnellement**, avec une **revue indépendante portant sur le même périmètre fonctionnel**. Conserver la continuité d'exécution autrefois obtenue par une WAVE longue grâce à l'**enchaînement autonome et fiable des WAVE** dans la queue Axon C.
+
+### Règles
+
+1. **Lotissement fonctionnel** : le Planner sélectionne le plus petit ensemble d'issues permettant une livraison et une revue fonctionnelle significatives. Aucun nombre fixe d'issues n'est prescrit ; éviter la fragmentation artificielle et les lots hétérogènes.
+2. **Continuité inter-WAVE** : lorsqu'une WAVE se termine, Axon C démarre automatiquement la suivante disponible sans attendre une review, un nouveau prompt ni une décision HITL. La queue doit pouvoir être alimentée en avance ; les reprises après erreur/redémarrage doivent éviter doublons et replay de livraisons.
+3. **Reviewer indépendant** : revue au niveau de la WAVE terminée, à partir du registre des intentions, des AC, du code Git et des résultats observables. Privilégier un **modèle gratuit** compte tenu du coût élevé en tokens et en temps des reviews.
+4. **Parallélisme** : la review de WAVE N peut s'exécuter pendant WAVE N+1. Échec, indisponibilité, timeout ou verdict AMBER du reviewer **ne bloquent jamais** l'enchaînement nominal.
+5. **Convergence intermédiaire** : le reviewer identifie les écarts à la cible connue ; le Planner déduplique, priorise et place les corrections pertinentes dans les WAVE suivantes, sans interrompre la WAVE active. Une review partielle exploitable a de la valeur.
+6. **GPT + HITL** : checkpoints périodiques pour revoir les écarts résiduels, interpréter les ambiguïtés et faire évoluer la cible. GPT peut reprendre une review manquée ou insuffisante ; le reviewer ne crée pas seul de nouvelles exigences métier.
+7. **Simplicité** : pas de sur-ingénierie des traces ni de gate supplémentaire. Le code Git reste la preuve principale de livraison ; le registre est la référence d'intention.
+
+### Critères d'acceptation fonctionnels
+
+- Une succession de WAVE courtes progresse sans intervention HITL, y compris si la review précédente est lente ou échoue.
+- Chaque WAVE correspond à un objectif fonctionnel explicite, dont le résultat peut être confronté aux intentions et AC.
+- Les écarts de review peuvent devenir des issues correctives dédupliquées, insérées dans la queue sans bloquer le flux.
+- Les livraisons acquises ne sont pas rejouées après une interruption ; les états sont réconciliés.
+- La prochaine revue GPT + HITL peut constater les écarts restants et ajuster la cible, sans dépendre du succès systématique des reviewers.
+
+### Mesure de réussite
+
+**Continuité** : capacité à enchaîner durablement les WAVE sans HITL, et non durée d'une WAVE isolée. **Convergence** : diminution des écarts fonctionnels résiduels entre deux checkpoints GPT + HITL, plutôt que nombre de remarques du reviewer. **Coût** : privilégier les modèles gratuits, sans sacrifier la continuité.
+
+### Impact sur les règles historiques
+
+- §1 et §2 : la revue GPT de fin de WAVE devient un recours et un checkpoint de convergence globale ; la revue indépendante par agent peut être systématisée à l'échelle de la WAVE, mais reste consultative et non bloquante.
+- §3 (06/10) : la suppression des reviewers **par issue** reste valable ; elle n'implique pas la suppression des reviewers **par WAVE**.
+- §6 : les critères de revue indépendante s'appliquent aussi au reviewer agent, à proportion des preuves disponibles ; GPT conserve la responsabilité de la revue globale avec HITL.
+- Le présent arbitrage décrit une **cible**, pas une affirmation d'implémentation ou de smoke réussi.
