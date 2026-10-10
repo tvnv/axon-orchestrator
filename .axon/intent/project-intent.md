@@ -201,3 +201,28 @@ L'asynchronisme entre WAVE est une **propriété recherchée**, pas une anomalie
 Smoke C1/C2/C3 du 10/10 : C2 et C3 `WAVE_DELIVERED` tandis que C1 conservait #602 `QUEUED`. Cette différence d'ordre est **compatible avec la cible asynchrone** ; elle ne suffit pas à qualifier un défaut d'ordonnancement. La validation porte sur la cohérence des changements acquis lors de l'enchaînement et sur la capacité à préparer NEXT.
 
 **Statut d'implémentation : cible à développer et valider par smoke réel ; aucune conformité présumée.**
+
+
+## 11. REX du 10/10/2026 — CHK autonome ponctuel du supervisor Stabilizer
+
+**Statut : intention active ; efficacité observée ponctuellement, continuité non encore démontrée.**
+
+Un CHK avec un modèle autonome en mode superviseur semble suffire à débloquer et relancer une WAVE (REX utilisateur). Ne pas confondre cette observation avec une preuve de fiabilité répétée.
+
+### Architecture cible
+
+- Axon-stabilizer possède le watchdog persistant et la surveillance déterministe ; Axon C reste l'unique exécuteur des WAVE.
+- Cible de polling externe **20 minutes**, configurable ; cette décision remplace la cadence 10 minutes de la proposition précédente pour ce contrôle, sans imposer de modifier d'autres boucles internes.
+- Si doute sur le progrès réel, déclencher **un CHK ponctuel par modèle autonome** en mode supervision ; ne pas maintenir un agent LLM permanent.
+- Blocage confirmé : diagnostic, correction bornée si autorisée, relance idempotente de la WAVE existante ; vérifier le progrès, puis revenir au polling.
+- Préserver les commits/SHA fonctionnels acquis, éviter les doublons et distinguer inférence longue légitime d'un stall. Le superviseur ne prend aucune décision réservée à l'HITL.
+
+### AC de validation par usage
+
+1. Watchdog indépendant des sessions OpenCode/ChatGPT, redémarrable, avec lease unique et état persistant.
+2. En fonctionnement normal, les CHK ne consomment pas d'inférence LLM ; l'agent n'est invoqué que sur doute ou anomalie.
+3. Sur une WAVE bloquée, CHK → diagnostic → correction éventuelle → relance → preuve de reprise, sans duplication de WAVE ni replay de livraison.
+4. Plusieurs WAVE courtes s'enchaînent automatiquement après au moins un blocage/recovery, sans HITL technique injustifié.
+5. Le succès d'un CHK ponctuel n'est pas assimilé à la preuve de continuité autonome tant que le smoke multi-WAVE n'est pas GREEN.
+
+Références : `tvnv/axon-stabilizer#72`, `#36` ; `tvnv/axon-execution-mcp#595`.
