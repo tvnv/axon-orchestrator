@@ -170,3 +170,31 @@ Remplacer les WAVE longues par des **WAVE courtes et cohérentes fonctionnelleme
 - §3 (06/10) : la suppression des reviewers **par issue** reste valable ; elle n'implique pas la suppression des reviewers **par WAVE**.
 - §6 : les critères de revue indépendante s'appliquent aussi au reviewer agent, à proportion des preuves disponibles ; GPT conserve la responsabilité de la revue globale avec HITL.
 - Le présent arbitrage décrit une **cible**, pas une affirmation d'implémentation ou de smoke réussi.
+
+
+## 11. Arbitrage du 10/10/2026 — stabilisation MiMo avant benchmark
+
+**Statut : actif — décision explicite HITL du 10/10/2026.** Complète le §10 et prévaut sur les choix de reviewer antérieurs pendant la stabilisation.
+
+### Décision
+Stabiliser le processus de revue indépendante et de convergence avec **MiMo V2.6 Flash comme reviewer par défaut**. Reporter tout benchmark comparatif des modèles jusqu'à la stabilité démontrée du processus. Ce choix est temporaire, pas une preuve de supériorité générale.
+
+### Boucle cible
+WAVE courte fonctionnelle → revue indépendante MiMo asynchrone et non bloquante → findings publiés dans le canal → upsert dédupliqué des issues → planner → WAVE corrective suivante sans HITL systématique.
+
+### Règles
+- Reviewer strictement read-only : aucun code, commit, merge, PR, issue ou WAVE modifié/lancé ; seule publication du RESULT dans le canal autorisé.
+- Oracle : registre d'intentions versionné, AC complètes des issues, code et SHA Git, tests et preuves d'usage réel. Les AC des items WAVE ne réduisent pas silencieusement celles des issues.
+- Findings différenciés : RED reproduit, AMBER hypothèse/risque ou preuve incomplète, GREEN démontré. WAVE_DELIVERED ne vaut pas validation fonctionnelle.
+- Planner : ingestion, déduplication, priorisation et réinjection des écarts dans la queue. Le reviewer ne redéfinit pas les exigences métier.
+- La revue reste asynchrone et non bloquante ; son échec, délai ou verdict ne retarde pas la WAVE suivante.
+- GPT + HITL : checkpoints globaux et arbitrages d'intentions ; promotion main soumise à HITL.
+
+### Critères de stabilité préalables au benchmark
+Plusieurs cycles consécutifs revue → publication → upsert → planner → WAVE corrective fonctionnent sans HITL injustifiée, findings perdus ou dupliqués, violation read-only ni confusion entre livraison et conformité. Vérifier par usage réel continuité et convergence. Aucun seuil chiffré inventé.
+
+### Benchmark ultérieur
+Une fois le processus stabilisé, comparer les modèles sur un protocole identique et des périmètres/SHA comparables : détection, preuves, reproductibilité, faux positifs, respect du rôle, délai et coût. Ne pas détourner la phase actuelle vers un benchmark exploratoire.
+
+### REX de référence
+Revue MiMo V2.6 Flash du 10/10/2026 sur les WAVE #599/#507 et #595/#600, publiée dans tvnv/axon-orchestrator#12 : respect du rôle read-only, deux défauts P0 détectés malgré des livraisons GREEN (F-01 perte de relance après crash ; F-04 incohérence terminale). Preuve ponctuelle d'utilité, pas benchmark définitif. Issues de convergence existantes mises à jour.
