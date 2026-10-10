@@ -226,3 +226,21 @@ Un CHK avec un modèle autonome en mode superviseur semble suffire à débloquer
 5. Le succès d'un CHK ponctuel n'est pas assimilé à la preuve de continuité autonome tant que le smoke multi-WAVE n'est pas GREEN.
 
 Références : `tvnv/axon-stabilizer#72`, `#36` ; `tvnv/axon-execution-mcp#595`.
+
+## 12. Arbitrage du 10/10/2026 — Reviewer stateless sur livraison fonctionnelle vérifiable
+
+**Statut : actif, décision HITL explicite du 10/10/2026.** Cette section **remplace la condition temporelle de déclenchement** « après WAVE terminée » du §10 et des issues #598/#596 ; elle ne supprime pas la granularité fonctionnelle WAVE, le plafond de convergence ou la revue globale GPT + HITL.
+
+### Finalité et frontière d'autorité
+Le reviewer est un accélérateur facultatif de convergence, non un prérequis de livraison ou d'enchaînement. Il aide à libérer la disponibilité HITL pour exercer jugement, contrôle et décision à une granularité supérieure. L'IA ne décide jamais de la cible, ne modifie pas le registre d'intentions et ne se substitue pas à l'arbitrage humain.
+
+### Contrat
+1. **Déclencheur déterministe** : une livraison fonctionnelle sur un périmètre cohérent de WAVE est prête à revoir dès que son `functional_delivery_sha` est vérifié dans Git distant, que la mission/AC et la version d'intention sont identifiables et que les preuves disponibles sont accessibles. Une WAVE peut rester `RUNNING` ; ne pas attendre `WAVE_DELIVERED`.
+2. **Snapshot immuable et idempotence** : clé logique `(repository, périmètre WAVE, functional_sha, intent/AC version)`. Relire ce snapshot, jamais un HEAD mutable ; un restart/tick concurrent ne produit pas deux reviews identiques.
+3. **Stateless et indépendant** : reviewer sans mémoire conversationnelle requise, alimenté par Git, registre canonique, prompt_snapshot, AC, tests/smokes et faits observables ; privilégier modèle gratuit sain/disponible.
+4. **Verdicts fondés sur preuve** : distinguer PASS, FAIL, NOT_VERIFIED, INDETERMINATE et sévérité ; un GREEN ACTOR, une WAVE_DELIVERED ou une absence d'erreur ne prouvent pas la conformité.
+5. **Aucun gate** : timeout, AMBER, indisponibilité ou findings n'interrompent ni ACTOR, ni queue, ni planner, ni WAVE suivante ; l'observabilité elle-même n'est pas un prérequis d'exécution.
+6. **Convergence bornée** : findings prouvés upsertés sans doublon puis consommés par le Wave Planner #597 après réconciliation Git/queue/backlog ; au plus deux générations de convergence par lignée selon #598. Pas de boucle reviewer-fix privée, pas de nouvelle exigence métier inventée.
+7. **Validation par usage** : reviewer peut examiner #603 alors que C1/#602 est encore QUEUED ; démontrer idempotence sur restart, non-blocage lors d'échec reviewer, conservation du SHA revu malgré HEAD avancé, et injection autonome des findings dans NEXT.
+
+**Références** : `tvnv/axon-execution-mcp#598`, `#596`, `#597`, `#604`. Les anciennes formulations « revue de fin de WAVE » demeurent historiques mais ne régissent plus le déclenchement.
