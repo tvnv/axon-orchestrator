@@ -170,3 +170,34 @@ Remplacer les WAVE longues par des **WAVE courtes et cohérentes fonctionnelleme
 - §3 (06/10) : la suppression des reviewers **par issue** reste valable ; elle n'implique pas la suppression des reviewers **par WAVE**.
 - §6 : les critères de revue indépendante s'appliquent aussi au reviewer agent, à proportion des preuves disponibles ; GPT conserve la responsabilité de la revue globale avec HITL.
 - Le présent arbitrage décrit une **cible**, pas une affirmation d'implémentation ou de smoke réussi.
+
+## 11. Arbitrage du 10/10/2026 — Synchronisation et cohérence pour le NEXT
+
+**Statut : actif — décision HITL explicite du 10/10/2026. Priorité prochaine itération.** Référence de mise en œuvre : `tvnv/axon-execution-mcp#604`.
+
+### Intention
+
+L'asynchronisme entre WAVE est une **propriété recherchée**, pas une anomalie. L'ordre de terminaison n'a pas à suivre l'ordre d'insertion ou la priorité. L'enjeu est la **synchronisation des livraisons et la cohérence fonctionnelle de la prochaine WAVE (NEXT)** : exécution asynchrone → réconciliation Git/états acquis → revue de cohérence → NEXT autonome.
+
+### Invariants
+
+1. **Git source de vérité** : au moment de construire et réclamer NEXT, réconcilier branche distante, SHA fonctionnels acquis, merges, issues et dépendances ; ne jamais planifier sur un état périmé sans revalidation.
+2. **Cohérence du lot** : NEXT regroupe des issues courtes et fonctionnellement compatibles, avec AC et dépendances explicites ; ne pas confondre priorité et ordre obligatoire de terminalisation.
+3. **Concurrence sans blocage global** : autoriser WAVE indépendantes en parallèle ; ne coordonner que les mutations/dépendances réellement conflictuelles. Une review lente ou AMBER ne bloque pas l'exécution.
+4. **Réconciliation avant replay** : si une autre WAVE a déjà livré le besoin, skip/reconcile sans dupliquer ; en cas de conflit réel, produire une correction bornée ou une escalade HITL pour toute modification de cible.
+5. **Reviewer consultatif** : revue indépendante MiMo/OpenCode au niveau WAVE, asynchrone et non bloquante ; écarts prouvés upsertés puis réinjectés dans NEXT. Respecter le plafond de deux générations de convergence de #598.
+6. **Autorité humaine** : l'IA analyse, propose et exécute dans le cadre défini ; elle ne change ni l'intention ni la responsabilité décisionnelle humaine.
+
+### Critères de validation par usage
+
+- Des WAVE terminent dans un ordre différent sans perte ni replay de livraisons.
+- Le planner compose NEXT à partir d'un état Git/queue réconcilié et de dépendances vérifiées.
+- Une livraison parallèle devenue suffisante entraîne skip/reconcile de l'item obsolète.
+- Les conflits réels sont détectés sans bloquer les WAVE indépendantes.
+- NEXT est insérée et poursuivie de manière autonome, sans attendre le reviewer ni l'HITL.
+
+### REX déclencheur
+
+Smoke C1/C2/C3 du 10/10 : C2 et C3 `WAVE_DELIVERED` tandis que C1 conservait #602 `QUEUED`. Cette différence d'ordre est **compatible avec la cible asynchrone** ; elle ne suffit pas à qualifier un défaut d'ordonnancement. La validation porte sur la cohérence des changements acquis lors de l'enchaînement et sur la capacité à préparer NEXT.
+
+**Statut d'implémentation : cible à développer et valider par smoke réel ; aucune conformité présumée.**
