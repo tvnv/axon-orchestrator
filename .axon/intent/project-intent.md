@@ -225,3 +225,16 @@ Les **revues sont des outils de pilotage ciblés, cadrés et sollicités par GPT
 **Contrat d'exécution :** Axon assure continuité, code, livraison, reprise et réconciliation dans le mandat reçu. Il remonte les écarts et les résultats pour arbitrage au niveau pilotage, sans bloquer les travaux indépendants. Les issues représentent la progression fonctionnelle ; WAVE_DELIVERED est un état technique. Ce principe prévaut sur toute description antérieure d'un Wave Planner choisissant autonomement des lots stratégiques depuis le backlog ou déclenchant une boucle de revue/convergence autonome.
 
 **AC de cible :** (1) lot de WAVE défini par GPT + HITL et exécuté par Axon ; (2) issues sans lien non regroupées artificiellement ; (3) planner Axon limité au périmètre d'exécution ; (4) revue fonctionnelle ou technique seulement à la demande GPT + HITL ; (5) absence de revue n'interrompt pas la continuité ; (6) résultats et écarts exploitables par pilotage. Décision de cible, pas preuve d'implémentation.
+
+
+## 12/10/2026 — Stabilité testable : diagnostic automatique et reprise BLOCKED/FAILED (PRÉVAUT)
+
+La finalité opérationnelle d'Axon est de **réduire la charge de supervision GPT + HITL et d'assurer une stabilité technique testable**. Axon demeure un cadre d'exécution au service du pilotage : GPT + HITL constituent les lots de WAVE cohérents et décident des revues fonctionnelles ou techniques ciblées ; Axon exécute, observe, réconcilie et récupère les incidents dans le mandat reçu.
+
+**Deux fonctions distinctes** :
+1. **Diagnostic/récupération automatique Axon + Stabilizer** sur BLOCKED, FAILED ou stall réel : reconstruire les faits (Git, issues, queue, preuves), identifier la cause, déterminer si la reprise/correction est possible sans décision de pilotage, planifier et exécuter une remédiation technique bornée, puis vérifier le retour au progrès. Réutiliser watchdog, queue corrective et worker existants. Préserver les statuts et livraisons acquis, dédupliquer, borner les retries et laisser progresser les travaux indépendants.
+2. **Revue de code fonctionnelle ou technique** : outil consultatif ciblé, déclenché et cadré uniquement par GPT + HITL sur issues structurantes, intégration, risque ou qualité. Aucun reviewer de convergence produit auto-déclenché à la fin d'une WAVE, d'un lot ou sur SHA.
+
+**Escalade** : si le diagnostic révèle une décision fonctionnelle, un changement d'intention, une correction hors mandat ou une impossibilité crédible de récupération, présenter un dossier factuel à GPT + HITL ; ne pas inventer de décision. Le résultat terminal BLOCKED/FAILED n'efface jamais les livraisons ni la progression des issues.
+
+**Validation par usage obligatoire pour déclarer la stabilité** : injecter BLOCKED récupérable, FAILED récupérable, restart en cours de traitement, cas irrécupérable et exécutions concurrentes ; constater diagnostic sourcé, correction ou escalade pertinente, reprise effective sans HITL lorsque autorisée, absence de duplication, et poursuite des WAVE indépendantes. Répéter pour vérifier la stabilité. Mesurer récupération autonome / incidents récupérables, temps de récupération, interventions HITL et régressions. Tests PASS et états GREEN seuls ne suffisent pas. Cette décision prévaut sur toute confusion antérieure entre reviewer automatique et stabilisation technique.
