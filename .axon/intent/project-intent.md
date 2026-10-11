@@ -198,3 +198,8 @@ Une fois le processus stabilisé, comparer les modèles sur un protocole identiq
 
 ### REX de référence
 Revue MiMo V2.6 Flash du 10/10/2026 sur les WAVE #599/#507 et #595/#600, publiée dans tvnv/axon-orchestrator#12 : respect du rôle read-only, deux défauts P0 détectés malgré des livraisons GREEN (F-01 perte de relance après crash ; F-04 incohérence terminale). Preuve ponctuelle d'utilité, pas benchmark définitif. Issues de convergence existantes mises à jour.
+
+
+## 12/10/2026 — Revue planifiée par lot de WAVE (décision HITL active, prévaut sur les déclenchements par WAVE/SHA)
+
+La granularité d'exécution est la WAVE courte ; la granularité de revue est un **lot fonctionnel significatif de plusieurs WAVE**, défini **en amont par le planner** avec issues, intentions et AC. Le reviewer se déclenche **une seule fois après la terminaison de toutes les WAVE du lot**, y compris états terminaux partiels/STOPPED/FAILED, sans réinitialiser les issues. Les livraisons acquises restent prouvées par Git. Les WAVE suivantes ne sont jamais bloquées par une revue lente ou indisponible. Revue transverse des interactions et de la convergence globale ; findings sourcés réinjectés dans le planner en lots correctifs. Pas de reviewer par issue, ni revue automatique par petite WAVE ou SHA RUNNING. Cette décision remplace explicitement les règles contraires des 10–11/10, sans effacer leur historique. REX : coût de compréhension du code quasi constant par revue, donc amortir sur un lot d'issues significatif. Mesurer temps/tokens par lot et progression fonctionnelle réellement obtenue. Cible à valider par smoke réel ; aucune implémentation présumée.
