@@ -244,3 +244,17 @@ Le reviewer est un accélérateur facultatif de convergence, non un prérequis d
 7. **Validation par usage** : reviewer peut examiner #603 alors que C1/#602 est encore QUEUED ; démontrer idempotence sur restart, non-blocage lors d'échec reviewer, conservation du SHA revu malgré HEAD avancé, et injection autonome des findings dans NEXT.
 
 **Références** : `tvnv/axon-execution-mcp#598`, `#596`, `#597`, `#604`. Les anciennes formulations « revue de fin de WAVE » demeurent historiques mais ne régissent plus le déclenchement.
+
+
+## Décision d'architecture — Queue corrective REST et worker NUC (11/10/2026)
+
+**Autorité HITL :** objectif 0 intervention humaine dans le cycle courant de remédiation, sans transférer la responsabilité de décision stratégique à l'IA. Validation par usage réel.
+
+- **Détection** : `axon-stabilizer` conserve la propriété exclusive du watchdog déterministe et qualifie les incidents WAVE ; Axon C est l'exécuteur observé/corrigé, pas la source des missions correctives.
+- **Queue** : table PostgreSQL persistante `corrective_jobs` dans `axon-stabilizer`, exposée par une API REST authentifiée (claim atomique, heartbeat/lease, result, status), idempotence par incident et récupération après crash. Pas de nouveau service de queue ni d'orchestrateur.
+- **Exécution** : worker batch permanent sur NUC/WSL2, supervisé par `systemd`, polling HTTPS sortant vers l'API, exécution non interactive d'OpenCode CLI pour diagnostic/fix/validation/reprise ; aucune dépendance SSH entrant Railway→NUC.
+- **Bornage** : ne pas interrompre une inférence réellement active, ne pas dupliquer les WAVE ni rejouer les livraisons acquises ; conserver les missions et leurs preuves durables ; déploiement et promotion seulement après validation par usage.
+- **Panne Stabilizer** : aucune détection ni création de nouvelle mission pendant son indisponibilité ; c'est une limite V1 acceptée, sans second détecteur ni mécanisme autonome de secours ajouté. Les missions déjà persistées reprennent quand l'API redevient accessible.
+- **Critère de convergence** : smoke réel incident → watchdog → PostgreSQL/API REST → worker NUC → OpenCode → RESULT → vérification/reprise WAVE, sans HITL. Démarrage Windows/WSL2 et veille hôte à vérifier.
+
+**Issues d'implémentation :** `tvnv/axon-stabilizer#75` (queue/API) puis `#76` (worker NUC) ; watchdog existant `#36/#72`.
