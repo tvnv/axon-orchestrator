@@ -258,3 +258,32 @@ Le reviewer est un accélérateur facultatif de convergence, non un prérequis d
 - **Critère de convergence** : smoke réel incident → watchdog → PostgreSQL/API REST → worker NUC → OpenCode → RESULT → vérification/reprise WAVE, sans HITL. Démarrage Windows/WSL2 et veille hôte à vérifier.
 
 **Issues d'implémentation :** `tvnv/axon-stabilizer#75` (queue/API) puis `#76` (worker NUC) ; watchdog existant `#36/#72`.
+
+
+## 9. Actualisation canonique — 14/10/2026
+
+> Cette section prévaut sur les arbitrages historiques contradictoires de l'export du 09/10. Elle décrit les **intentions de gouvernance**, non une preuve de conformité technique.
+
+### Pilotage et exécution
+- **GPT + HITL** détiennent la définition de l'intention, la sélection des issues, les AC, la composition de lots de WAVE fonctionnellement cohérents et indépendants, l'autorisation d'admission, la réconciliation des issues et la décision de livraison `main`.
+- **Axon C** est le cadre d'exécution stateless et borné : planner de tasks au sein des issues, WAVE, reprise, queue et exécution des lots autorisés. Axon ne choisit pas seul le backlog ni les lots fonctionnels.
+- **Axon S / Stabilizer OpenCode** surveille déterministement, diagnostique, répare Axon C et relance sans devenir un exécuteur concurrent du travail métier. Les contrôles périodiques sont découplés des décisions LLM.
+- **Validation par usage réel** : code, tests, merge et statut WAVE ne suffisent pas toujours ; ne pas imposer de smoke fictif ou de preuves impossibles. Clôturer lorsque les AC et le besoin sont satisfaits, sans défaut concret résiduel.
+
+### Orchestration de lots WAVE — décision du 14/10 (#632)
+- Une queue persistante de **lots de WAVE** contient le mandat GPT/HITL et une liste immuable de WAVE indépendantes. L'admission est explicite ; le dispatcher lance les WAVE admissibles en parallèle avec contrôle des chevauchements d'issues et des périmètres d'écriture, sans altérer la queue séquentielle existante.
+- Un worker déterministe observe les états canoniques ; la barrière n'est franchie que lorsque **toutes** les WAVE sont terminales `DELIVERED` ou `DONE_WITH_ISSUES`. Une WAVE lancée avec issue `QUEUED` demeure `RUNNING`. Les états inconnus n'autorisent pas la revue.
+- **Une seule revue fonctionnelle consolidée par cycle**, READ-ONLY et non bloquante, compare intention, AC, diffs/SHA et preuves. Après correction, une **nouvelle revue** examine le code corrigé ; les anciens findings ne sont pas recyclés.
+- Les findings actionnables déclenchent des WAVE de convergence ciblées, durables et idempotentes. **Deux cycles correctifs maximum** par lot ; au-delà, retour `NEEDS_HITL` à GPT + HITL. Les lots indépendants continuent sans blocage global.
+- L'unité de revue est le **lot fonctionnel**, pas l'issue isolée ; aucun reviewer automatique systématique par issue. La revue technique ciblée reste possible.
+- Le parallélisme est un levier de délai/ressources lorsque les sujets sont indépendants ; environ quatre sujets simultanés restent une limite pratique de pilotage humain, non une limite technique universelle.
+
+### États, preuves et responsabilité
+- États WAVE calculés **sans IA** : avant lancement `QUEUED` ; après lancement `RUNNING` tant qu'une issue est active ou en attente ; `DELIVERED` si toutes DONE ; `DONE_WITH_ISSUES` si plus aucun travail actif et au moins une issue BLOCKED/FAILED.
+- Distinguer livraison technique, verdict de revue, validation fonctionnelle et promotion `main`. Conserver SHA fonctionnel, traces, transitions, `review_ref`, cycles et `RESULT` dans `tvnv/axon-orchestrator#2` ; Git demeure la source durable du code.
+- Les issues GitHub et leurs AC sont **réconciliées par GPT**, pas automatiquement par le reviewer ; supprimer les doublons et ne pas rejouer les acquis.
+
+### État observé au 14/10 — non confondre avec intention
+- `tvnv/axon-execution-mcp#632` : deux WAVE de convergence livrées (`batch-ceeb87525d9d4c04bbd2d9669f2951c6`, `batch-a4b05d706f92418288b19dda2489ec7c`) ; HEAD `dev` observé `093f32caba2ccd50950ee4bc4620ab9dcb10f7b3` ; F1 nouvelle revue, F2 idempotence corrective et F3 dispatch parallèle corrigés dans le code.
+- **Statut fonctionnel AMBER** : validation par usage d'un lot réel multi-WAVE et de la chaîne revue/convergence encore à démontrer ; issue #632 rouverte pour ce reliquat, sans troisième cycle correctif automatique.
+- Liens de gouvernance : https://github.com/tvnv/axon-execution-mcp/issues/632 et https://github.com/tvnv/axon-orchestrator/issues/2 .
