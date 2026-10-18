@@ -481,11 +481,8 @@ class OpenCodeNUCWorker:
         }
 
         try:
-            # Calculer la deadline basée sur l'expiration du lease (si fournie)
-            # Pour GitHub, nous utilisons la fenêtre de heartbeat comme deadline principale
-            deadline = self.config.heartbeat_seconds
+            deadline = self.config.opencode_timeout_seconds
 
-            # Exécuter OpenCode avec heartbeat
             result = self.executor.execute(
                 request,
                 heartbeat=lambda: self._safe_heartbeat(request_id),
