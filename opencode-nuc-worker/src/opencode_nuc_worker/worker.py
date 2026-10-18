@@ -408,22 +408,29 @@ class OpenCodeExecutor:
                 tempfile.TemporaryFile(mode="w+") as err_f:
             proc = subprocess.Popen(argv, stdout=out_f, stderr=err_f,
                                     cwd=self.workdir or None, text=True)
-            heartbeat_at = time.monotonic() + self._heartbeat_interval(deadline_seconds)
-            while proc.poll() is None and time.monotonic() < start + window:
-                if time.monotonic() >= heartbeat_at:
-                    heartbeat()
-                    heartbeat_at = time.monotonic() + self._heartbeat_interval(deadline_seconds)
-                time.sleep(1)
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait()
-                return OpenCodeResult(
-                    ok=False,
-                    exit_code=proc.returncode,
-                    stderr_tail="OpenCode exceeded lease window",
-                    duration_seconds=int(time.monotonic() - start),
-                    request_id=request.request_id
-                )
+            try:
+                heartbeat_at = time.monotonic() + self._heartbeat_interval(deadline_seconds)
+                while proc.poll() is None and time.monotonic() < start + window:
+                    if time.monotonic() >= heartbeat_at:
+                        heartbeat()
+                        heartbeat_at = time.monotonic() + self._heartbeat_interval(deadline_seconds)
+                    time.sleep(1)
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+                    return OpenCodeResult(
+                        ok=False,
+                        exit_code=proc.returncode,
+                        stderr_tail="OpenCode exceeded lease window",
+                        duration_seconds=int(time.monotonic() - start),
+                        request_id=request.request_id
+                    )
+            except BaseException:
+                # Ensure the subprocess is always cleaned up on any exception
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+                raise
             out_f.seek(0)
             err_f.seek(0)
             out, err = out_f.read()[-2000:], err_f.read()[-2000:]
@@ -623,23 +630,18 @@ class OpenCodeNUCWorker:
             self._log(f"échec de la publication de RESULT pour la requête {request.request_id}: {exc}")
 
     def _safe_heartbeat(self, request_id: str) -> None:
-        """Heartbeat sécurisé pour une requête active."""
+        """Heartbeat sécurisé pour une requête active — renouvelle le timestamp, ne lève pas FencedOut.
+
+        FencedOut n'est pertinent que pour des leases distribués externes.  Ici le timeout
+        est déjà géré par la fenêtre ``window`` dans ``OpenCodeExecutor.execute()``.
+        """
         if request_id not in self.active_requests:
             return
-
         try:
-            # Vérifier la validité de la requête active
             active_req = self.active_requests[request_id]
-            now = datetime.now(timezone.utc).timestamp()
-
-            if now > active_req["heartbeat_deadline"]:
-                raise FencedOut(f"Le lease pour la requête {request_id} a expiré")
-
-            # Mettre à jour la deadline
-            active_req["heartbeat_deadline"] = now + self.config.heartbeat_seconds
-
-        except FencedOut:
-            raise
+            active_req["heartbeat_deadline"] = (
+                datetime.now(timezone.utc).timestamp() + self.config.heartbeat_seconds
+            )
         except Exception as exc:
             self._log(f"erreur de heartbeat pour la requête {request_id}: {exc}")
 
