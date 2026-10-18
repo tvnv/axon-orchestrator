@@ -10,7 +10,7 @@ import os
 # Add the src directory to the Python path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from opencode_nuc_worker import GitHubRequest, WorkerConfig, ResultsJournal, OpenCodeNUCWorker, GitHubRestClient
+from opencode_nuc_worker import GitHubRequest, WorkerConfig, ResultsJournal, StateDB, OpenCodeNUCWorker, GitHubRestClient
 from opencode_nuc_worker import OpenCodeExecutor
 
 
@@ -176,20 +176,16 @@ class TestResultsJournal:
 class TestWorkerPolling:
     """Tests pour la logique de polling du worker."""
 
-    def test_worker_poll_valid_request(self, tmpdir):
+    def test_worker_poll_valid_request(self, tmp_path):
         """Test que le worker traite une requête REQUEST valide."""
-        # Mock de configuration
         config = WorkerConfig(
             github_token="fake-token",
             allowed_repos=["tvnv/axon-orchestrator"],
-            allowed_authors=["testuser"]  # Seul cet utilisateur est autorisé
+            allowed_authors=["testuser"],
         )
 
-        # Mock de journal
-        journal_path = tmpdir / "results.jsonl"
-        journal = ResultsJournal(str(journal_path))
+        db = StateDB(str(tmp_path / "state.db"))
 
-        # Mock du client REST GitHub
         mock_client = Mock(spec=GitHubRestClient)
         mock_client.get_issue_comments.return_value = [
             {
@@ -198,42 +194,34 @@ class TestWorkerPolling:
                 "user": {"login": "testuser", "id": 789},
                 "repository": {"full_name": "tvnv/axon-orchestrator"},
                 "created_at": "2026-10-18T18:00:00Z",
-                "branch": "main"
+                "branch": "main",
             }
         ]
+        mock_client.create_comment.return_value = {"id": 99}
 
-        # Mock de l'exécuteur OpenCode
         mock_executor = Mock(spec=OpenCodeExecutor)
         mock_executor.execute.return_value = Mock(
-            ok=True,
-            exit_code=0,
-            stdout_tail="Test output",
-            stderr_tail="",
-            duration_seconds=5,
-            request_id="test-request-123"
+            ok=True, exit_code=0, stdout_tail="Test output",
+            stderr_tail="", duration_seconds=5, request_id="test-request-123"
         )
 
-        # Créer le worker avec des mocks
-        worker = OpenCodeNUCWorker(config, Mock(), journal, mock_executor)
+        worker = OpenCodeNUCWorker(config, Mock(), db, mock_executor)
         worker.client = mock_client
 
-        # Effectuer un polling
         result = worker.poll_once()
 
-        # Devrait traiter la requête
         assert result is True
-        assert len(journal) == 1  # Le résultat devrait être enregistré
+        assert db.get_state("test-request-123") == "COMPLETED"
 
-    def test_worker_rejects_unauthorized_request(self, tmpdir):
+    def test_worker_rejects_unauthorized_request(self, tmp_path):
         """Test que le worker rejette une requête non autorisée."""
         config = WorkerConfig(
             github_token="fake-token",
             allowed_repos=["tvnv/axon-orchestrator"],
-            allowed_authors=["authorized-user@github.com"]  # Seul cet utilisateur est autorisé
+            allowed_authors=["authorized-user@github.com"],
         )
 
-        journal_path = tmpdir / "results.jsonl"
-        journal = ResultsJournal(str(journal_path))
+        db = StateDB(str(tmp_path / "state.db"))
 
         mock_client = Mock(spec=GitHubRestClient)
         mock_client.get_issue_comments.return_value = [
@@ -243,34 +231,28 @@ class TestWorkerPolling:
                 "user": {"login": "unauthorized-user", "id": 790},
                 "repository": {"full_name": "tvnv/axon-orchestrator"},
                 "created_at": "2026-10-18T18:00:00Z",
-                "branch": "main"
+                "branch": "main",
             }
         ]
 
-        worker = OpenCodeNUCWorker(config, Mock(), journal, Mock())
+        worker = OpenCodeNUCWorker(config, Mock(), db, Mock())
         worker.client = mock_client
 
         result = worker.poll_once()
 
-        # Devrait ignorer la requête non autorisée
         assert result is False
-        assert len(journal) == 0  # Aucun résultat enregistré
+        assert len(db) == 0
 
-    def test_worker_idempotence(self, tmpdir):
-        """Test que le worker traite les requêtes en double de manière idempotente (mission critique)."""
+    def test_worker_idempotence(self, tmp_path):
+        """Test que le worker traite les requêtes en double de manière idempotente."""
         config = WorkerConfig(
             github_token="fake-token",
             allowed_authors=["testuser"],
         )
 
-        journal_path = tmpdir / "results.jsonl"
-        journal = ResultsJournal(str(journal_path))
+        db = StateDB(str(tmp_path / "state.db"))
 
-        # Créer un mock client qui retourne différents résultats pour chaque appel
-        from unittest.mock import call
         mock_client = Mock(spec=GitHubRestClient)
-        
-        # Premier appel - retourne une requête
         mock_client.get_issue_comments.side_effect = [
             [
                 {
@@ -279,34 +261,41 @@ class TestWorkerPolling:
                     "user": {"login": "testuser", "id": 791},
                     "repository": {"full_name": "tvnv/axon-orchestrator"},
                     "created_at": "2026-10-18T18:00:00Z",
-                    "branch": "main"
+                    "branch": "main",
                 }
             ],
-            []  # Second appel - retourne vide (pas de nouvelles requêtes)
+            # Second poll: same comment again (simulates re-seeing it)
+            [
+                {
+                    "id": 123458,
+                    "body": "REQUEST: {\"request_id\": \"duplicate-request\", \"mission\": {\"id\": \"mission-123\"}}",
+                    "user": {"login": "testuser", "id": 791},
+                    "repository": {"full_name": "tvnv/axon-orchestrator"},
+                    "created_at": "2026-10-18T18:00:00Z",
+                    "branch": "main",
+                }
+            ],
         ]
+        mock_client.create_comment.return_value = {"id": 100}
 
         mock_executor = Mock(spec=OpenCodeExecutor)
         mock_executor.execute.return_value = Mock(
-            ok=True,
-            exit_code=0,
-            stdout_tail="Test output",
-            stderr_tail="",
-            duration_seconds=5,
-            request_id="duplicate-request"
+            ok=True, exit_code=0, stdout_tail="Test output",
+            stderr_tail="", duration_seconds=5, request_id="duplicate-request"
         )
 
-        worker = OpenCodeNUCWorker(config, Mock(), journal, mock_executor)
+        worker = OpenCodeNUCWorker(config, Mock(), db, mock_executor)
         worker.client = mock_client
 
-        # Premier polling - devrait traiter la requête
         result1 = worker.poll_once()
         assert result1 is True
-        assert len(journal) == 1
+        assert db.get_state("duplicate-request") == "COMPLETED"
 
-        # Second polling - devrait être ignoré (pas de nouvelles requêtes)
+        # Second poll sees same request — claim_or_retry returns False → not processed again
         result2 = worker.poll_once()
         assert result2 is False
-        assert len(journal) == 1  # Pas de nouveaux enregistrements
+        # Executor must have been called exactly once
+        assert mock_executor.execute.call_count == 1
 
 
 class TestWorkerServiceIntegration:

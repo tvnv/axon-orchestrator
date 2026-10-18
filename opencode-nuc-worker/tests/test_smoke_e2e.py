@@ -117,14 +117,14 @@ class TestWorkerRealExecution:
 
         mock_popen.return_value = mock_proc
 
-        # Mock de fichiers temporels
-        mock_out_f = Mock()
+        # Mock de fichiers temporels (MagicMock needed for context manager protocol)
+        mock_out_f = MagicMock()
+        mock_out_f.__enter__.return_value = mock_out_f
         mock_out_f.read.return_value = '{"ok": true, "stdout": "Test output"}'
-        mock_out_f.seek = Mock()
-        
-        mock_err_f = Mock()
+
+        mock_err_f = MagicMock()
+        mock_err_f.__enter__.return_value = mock_err_f
         mock_err_f.read.return_value = '{"ok": true, "stderr": "Test error"}'
-        mock_err_f.seek = Mock()
 
         mock_tempfile.side_effect = [mock_out_f, mock_err_f]
 
@@ -195,25 +195,27 @@ class TestWorkerRealExecution:
 
         with patch('subprocess.Popen', return_value=mock_proc):
             with patch('tempfile.TemporaryFile') as mock_tempfile:
-                mock_out_f = Mock()
+                mock_out_f = MagicMock()
+                mock_out_f.__enter__.return_value = mock_out_f
                 mock_out_f.read.return_value = ''
-                mock_out_f.seek = Mock()
-                mock_err_f = Mock()
+
+                mock_err_f = MagicMock()
+                mock_err_f.__enter__.return_value = mock_err_f
                 mock_err_f.read.return_value = 'OpenCode exceeded lease window'
-                mock_err_f.seek = Mock()
+
                 mock_tempfile.side_effect = [mock_out_f, mock_err_f]
 
                 executor = OpenCodeExecutor(
                     bin_path="opencode",
                     workdir="",
-                    timeout_seconds=10
+                    timeout_seconds=2
                 )
 
-                result = executor.execute(request, lambda: None, deadline_seconds=5)
+                result = executor.execute(request, lambda: None, deadline_seconds=2)
 
                 # Devrait retourner une défaillance due au timeout
                 assert result.ok is False
-                assert "dépassé" in result.stderr_tail.lower()
+                assert "exceeded" in result.stderr_tail.lower()
 
 
 class TestWorkerStateManagement:

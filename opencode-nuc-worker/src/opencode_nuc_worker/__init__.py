@@ -5,6 +5,7 @@ from .worker import (
     WorkerConfig,
     GitHubRestClient,
     ResultsJournal,
+    StateDB,
     OpenCodeExecutor,
     GitHubRequest,
     worker_config_from_settings,

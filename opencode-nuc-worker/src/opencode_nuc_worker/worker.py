@@ -23,6 +23,7 @@ Garanties :
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -73,10 +74,19 @@ def parse_request_from_body(body: str) -> dict | None:
                     except json.JSONDecodeError:
                         pass
             elif after.startswith("{"):
+                # Try single-line first
                 try:
                     return json.loads(after)
                 except json.JSONDecodeError:
                     pass
+                # Multi-line inline JSON: reconstruct from the REQUEST: position
+                req_pos = body.find("REQUEST:")
+                if req_pos >= 0:
+                    full_after = body[req_pos + len("REQUEST:"):].strip()
+                    try:
+                        return json.loads(full_after)
+                    except json.JSONDecodeError:
+                        pass
             # Fenced block starts on a later line
             request_line_idx = i
             break
@@ -126,6 +136,7 @@ DEFAULT_POLL_SECONDS = 30
 DEFAULT_HEARTBEAT_SECONDS = 30
 DEFAULT_OPENCODE_TIMEOUT_SECONDS = 3600
 DEFAULT_JOURNAL_PATH = "data/worker/results.jsonl"
+DEFAULT_STATE_DB_PATH = "~/.local/share/opencode-nuc-worker/state.db"
 DEFAULT_WORKER_ID = "opencode-nuc-worker"
 DEFAULT_GITHUB_REPO = "tvnv/axon-orchestrator"
 DEFAULT_GITHUB_TOKEN_SCOPES = ["repo", "read:org"]
@@ -148,6 +159,7 @@ class WorkerConfig(BaseModel):
     opencode_workdir: str = ""  # Sera défini comme /home/van/axon
     opencode_timeout_seconds: int = DEFAULT_OPENCODE_TIMEOUT_SECONDS
     journal_path: str = DEFAULT_JOURNAL_PATH
+    state_db_path: str = DEFAULT_STATE_DB_PATH
     allowed_repos: list[str] = [DEFAULT_GITHUB_REPO]
     allowed_authors: list[str] = []
 
@@ -279,7 +291,11 @@ def build_opencode_prompt(request: GitHubRequest) -> str:
         for key, value in payload.items():
             prompt_parts.append(f"{key}: {value}")
 
-    prompt_parts.append("\nExecute the requested task autonomously using OpenCode CLI.")
+    prompt_parts.append(
+        "\nExecute the requested task autonomously. "
+        "Do NOT post any comments, ACK, WORKING or RESULT messages to GitHub directly — "
+        "the calling worker captures your output and publishes the result."
+    )
 
     return "\n".join(prompt_parts)
 
@@ -332,6 +348,166 @@ class ResultsJournal:
 
     def __len__(self) -> int:
         return len(self._entries)
+
+
+class StateDB:
+    """Durable SQLite state machine for per-request idempotence.
+
+    States: CLAIMED → RUNNING → COMPLETED | FAILED
+
+    ``claim_or_retry`` uses INSERT OR IGNORE so that only one worker process
+    (or one restart) ever wins the initial claim for a given request_id.
+    A CLAIMED row with running_at IS NULL means the worker was interrupted
+    before execution started and may retry; a RUNNING row is left alone.
+    """
+
+    SCHEMA = """
+        CREATE TABLE IF NOT EXISTS requests (
+            request_id            TEXT PRIMARY KEY,
+            state                 TEXT NOT NULL
+                                  CHECK(state IN ('CLAIMED','RUNNING','COMPLETED','FAILED')),
+            claimed_at            TEXT NOT NULL,
+            running_at            TEXT,
+            completed_at          TEXT,
+            outcome               TEXT,
+            github_result_comment_id INTEGER
+        )
+    """
+
+    def __init__(self, path: str):
+        resolved = Path(path).expanduser()
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        self.path = resolved
+        # isolation_level=None → autocommit; each statement is its own transaction.
+        self._con = sqlite3.connect(str(resolved), check_same_thread=False,
+                                    isolation_level=None)
+        self._con.execute("PRAGMA journal_mode=WAL")
+        self._con.execute(self.SCHEMA)
+
+    # ------------------------------------------------------------------
+    # State transitions
+    # ------------------------------------------------------------------
+
+    def claim_or_retry(self, request_id: str) -> bool:
+        """Try to acquire this request_id for processing.
+
+        Returns True when this worker should proceed:
+        - new request (INSERT OR IGNORE succeeds), or
+        - CLAIMED but never started (running_at IS NULL) — retryable after crash.
+
+        Returns False for RUNNING, COMPLETED, or FAILED states.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        cur = self._con.execute(
+            "INSERT OR IGNORE INTO requests (request_id, state, claimed_at) VALUES (?, 'CLAIMED', ?)",
+            (request_id, now),
+        )
+        if cur.rowcount > 0:
+            return True  # new claim won
+
+        # Already exists — inspect the existing row
+        row = self._con.execute(
+            "SELECT state, running_at FROM requests WHERE request_id=?",
+            (request_id,),
+        ).fetchone()
+        if not row:
+            return False
+
+        state, running_at = row
+        if state == "CLAIMED" and running_at is None:
+            # Interrupted before execution started — allow retry via optimistic UPDATE
+            cur2 = self._con.execute(
+                "UPDATE requests SET claimed_at=? "
+                "WHERE request_id=? AND state='CLAIMED' AND running_at IS NULL",
+                (now, request_id),
+            )
+            return cur2.rowcount > 0
+
+        return False  # RUNNING, COMPLETED, or FAILED
+
+    def mark_running(self, request_id: str) -> None:
+        self._con.execute(
+            "UPDATE requests SET state='RUNNING', running_at=? WHERE request_id=?",
+            (datetime.now(timezone.utc).isoformat(), request_id),
+        )
+
+    def mark_completed(self, request_id: str, outcome: dict,
+                       comment_id: Optional[int] = None) -> None:
+        self._con.execute(
+            "UPDATE requests SET state='COMPLETED', completed_at=?, "
+            "outcome=?, github_result_comment_id=? WHERE request_id=?",
+            (datetime.now(timezone.utc).isoformat(),
+             json.dumps(outcome), comment_id, request_id),
+        )
+
+    def mark_failed(self, request_id: str, outcome: dict) -> None:
+        self._con.execute(
+            "UPDATE requests SET state='FAILED', completed_at=?, outcome=? WHERE request_id=?",
+            (datetime.now(timezone.utc).isoformat(), json.dumps(outcome), request_id),
+        )
+
+    # ------------------------------------------------------------------
+    # Queries
+    # ------------------------------------------------------------------
+
+    def get_state(self, request_id: str) -> Optional[str]:
+        row = self._con.execute(
+            "SELECT state FROM requests WHERE request_id=?", (request_id,)
+        ).fetchone()
+        return row[0] if row else None
+
+    def get_result_comment_id(self, request_id: str) -> Optional[int]:
+        row = self._con.execute(
+            "SELECT github_result_comment_id FROM requests WHERE request_id=?",
+            (request_id,),
+        ).fetchone()
+        return row[0] if row else None
+
+    def get_outcome(self, request_id: str) -> Optional[dict]:
+        row = self._con.execute(
+            "SELECT outcome FROM requests WHERE request_id=?", (request_id,)
+        ).fetchone()
+        if row and row[0]:
+            try:
+                return json.loads(row[0])
+            except json.JSONDecodeError:
+                return None
+        return None
+
+    # ------------------------------------------------------------------
+    # Migration
+    # ------------------------------------------------------------------
+
+    def migrate_from_jsonl(self, jsonl_path: str) -> int:
+        """Import COMPLETED entries from a JSONL journal. Returns count imported."""
+        path = Path(jsonl_path)
+        if not path.exists():
+            return 0
+        count = 0
+        for line in path.read_text().splitlines():
+            try:
+                entry = json.loads(line)
+                rid = entry.get("request_id")
+                if not rid:
+                    continue
+                ts = entry.get("recorded_at", datetime.now(timezone.utc).isoformat())
+                cur = self._con.execute(
+                    "INSERT OR IGNORE INTO requests "
+                    "(request_id, state, claimed_at, running_at, completed_at, outcome) "
+                    "VALUES (?, 'COMPLETED', ?, ?, ?, ?)",
+                    (rid, ts, ts, ts, json.dumps(entry.get("outcome", {}))),
+                )
+                if cur.rowcount > 0:
+                    count += 1
+            except (json.JSONDecodeError, KeyError):
+                continue
+        return count
+
+    def close(self) -> None:
+        self._con.close()
+
+    def __len__(self) -> int:
+        return self._con.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
 
 
 class GitHubRestClient:
@@ -452,9 +628,9 @@ class OpenCodeNUCWorker:
     """Worker OpenCode NUC : polling GitHub → validation → ACK/WORKING → OpenCode → RESULT."""
 
     def __init__(self, config: WorkerConfig, http: httpx.Client,
-                 journal: ResultsJournal, executor: Optional[OpenCodeExecutor] = None):
+                 db: StateDB, executor: Optional[OpenCodeExecutor] = None):
         self.config = config
-        self.journal = journal
+        self.db = db
         self.executor = executor or OpenCodeExecutor(
             bin_path=config.opencode_bin,
             workdir=config.opencode_workdir,
@@ -466,21 +642,20 @@ class OpenCodeNUCWorker:
         self.last_poll_time: Optional[datetime] = None
 
     def process(self, request: GitHubRequest) -> None:
-        """Traite une requête VALIDÉE : publie ACK, puis WORKING, puis exécute OpenCode, puis RESULT."""
+        """Traite une requête VALIDÉE : publie ACK, puis WORKING, puis exécute OpenCode, puis RESULT.
+
+        La requête doit avoir été claim_or_retry() avec succès avant d'appeler cette méthode.
+        """
         request_id = request.request_id
 
-        # Vérifier si la requête a déjà été traitée (idempotence)
-        if request_id in self.journal._entries:
-            self._log(f"requête {request_id} déjà traitée, republiant ACK et WORKING")
-            self._publish_ack(request, "reprise après crash")
-            self._publish_working(request, "reprise")
-            return
+        # Transition CLAIMED → RUNNING (durable, bloque tout re-traitement après redémarrage)
+        self.db.mark_running(request_id)
 
-        # Publier ACK et WORKING immédiatement pour assurer la détection de présence
-        self._publish_ack(request, "nouveau")
+        # Publier ACK et WORKING (best-effort, erreur non fatale)
+        self._publish_ack(request, "en cours")
         self._publish_working(request, "en cours")
 
-        # Stocker l'état actif
+        # Stocker l'état actif en mémoire
         self.active_requests[request_id] = {
             "request": request,
             "start_time": datetime.now(timezone.utc),
@@ -496,7 +671,6 @@ class OpenCodeNUCWorker:
                 deadline_seconds=deadline
             )
 
-            # Enregistrer le résultat et publier RESULT dans l'issue #12
             outcome = {
                 "success": result.ok,
                 "exit_code": result.exit_code,
@@ -504,15 +678,22 @@ class OpenCodeNUCWorker:
                 "stdout": result.stdout_tail,
                 "stderr": result.stderr_tail,
             }
-            self.journal.record(request_id, outcome)
-            self._publish_result(request, outcome)
+
+            # Publier RESULT dans #12 (worker est l'unique publisher — F2)
+            comment_id = self._publish_result(request, outcome)
+
+            if result.ok:
+                self.db.mark_completed(request_id, outcome, comment_id)
+            else:
+                self.db.mark_failed(request_id, outcome)
 
         except FencedOut:
-            self._log(f"requête {request_id} était verrouillée : un lease plus récent a pris le dessus")
+            self._log(f"requête {request_id} verrouillée : lease plus récent")
+            self.db.mark_failed(request_id, {"error": "FencedOut"})
         except Exception as exc:
             self._log(f"erreur fatale lors du traitement de la requête {request_id}: {exc}")
+            self.db.mark_failed(request_id, {"error": str(exc)})
         finally:
-            # Nettoyer l'état actif
             if request_id in self.active_requests:
                 del self.active_requests[request_id]
 
@@ -557,8 +738,18 @@ class OpenCodeNUCWorker:
                         )
                         continue
 
-                    if request.request_id in self.active_requests:
-                        self._log(f"requête {request.request_id} déjà active, en ignorant")
+                    request_id = request.request_id
+
+                    if request_id in self.active_requests:
+                        self._log(f"requête {request_id} déjà active en mémoire, ignorée")
+                        continue
+
+                    # Atomic claim — prevents double-execution across restarts and instances
+                    if not self.db.claim_or_retry(request_id):
+                        self._log(
+                            f"requête {request_id} déjà revendiquée "
+                            f"(état: {self.db.get_state(request_id)}), ignorée"
+                        )
                         continue
 
                     self.process(request)
@@ -609,25 +800,61 @@ class OpenCodeNUCWorker:
         except Exception as exc:
             self._log(f"échec de la publication de WORKING pour la requête {request.request_id}: {exc}")
 
-    def _publish_result(self, request: GitHubRequest, outcome: dict) -> None:
-        """Publie un commentaire RESULT dans l'issue #12 (OpenCode result channel)."""
+    def _publish_result(self, request: GitHubRequest, outcome: dict) -> Optional[int]:
+        """Publie un commentaire RESULT dans l'issue #12 (F2 — worker est l'unique publisher).
+
+        Vérifie la DB avant de poster pour éviter tout doublon. Retourne le comment_id GitHub
+        (ou None en cas d'échec), stocké dans la DB par process().
+        """
+        request_id = request.request_id
+
+        # Idempotence: already published by this worker (e.g. crash after post but before mark_completed)
+        existing_comment_id = self.db.get_result_comment_id(request_id)
+        if existing_comment_id is not None:
+            self._log(
+                f"RESULT déjà publié pour {request_id} "
+                f"(comment #{existing_comment_id}), ignoré"
+            )
+            return existing_comment_id
+
         try:
             repo_parts = request.repo.split("/")
             if len(repo_parts) != 2:
-                return
+                return None
 
             owner, repo = repo_parts
 
-            # Construire le message RESULT
-            status = "✅ SUCCÈS" if outcome["success"] else "❌ ÉCHEC"
-            result_body = f"**[RESULT]**\n\nTask: {request.request_id}\nStatus: {status}\nDuration: {outcome['duration_seconds']}s\nExit Code: {outcome['exit_code']}\n\n---\n\n**Détails d'exécution:**\n```\n{outcome['stderr']}\n```\n\n**Sortie standard:**\n```\n{outcome['stdout']}\n```\n\n---\n**Timestamp:** {datetime.now(timezone.utc).isoformat()}\n**Auteur:** {request.author_login}\n**Dépôt:** {request.repo}\n**Branche:** {request.branch}\n**Mission ID:** {request.mission.get('id', 'unknown')}\n\n[Retour aux détails de la mission → #31]"
+            status = "SUCCESS" if outcome["success"] else "FAILURE"
+            stdout_excerpt = (outcome.get("stdout") or "")[-1500:]
+            stderr_excerpt = (outcome.get("stderr") or "")[-500:]
+            result_body = (
+                f"**[RESULT]**\n\n"
+                f"Task: {request_id}\n"
+                f"Status: {status}\n"
+                f"Duration: {outcome['duration_seconds']}s\n"
+                f"Exit Code: {outcome['exit_code']}\n\n"
+                f"---\n\n"
+                f"**Output:**\n```\n{stdout_excerpt}\n```\n"
+            )
+            if stderr_excerpt:
+                result_body += f"\n**Stderr:**\n```\n{stderr_excerpt}\n```\n"
+            result_body += (
+                f"\n---\n"
+                f"**Timestamp:** {datetime.now(timezone.utc).isoformat()}\n"
+                f"**Author:** {request.author_login}\n"
+                f"**Repo:** {request.repo} @ {request.branch}\n"
+                f"**Mission:** {request.mission.get('id', 'unknown')}\n\n"
+                f"[Details → #31]"
+            )
 
-            # Publier dans l'issue #12
-            self.client.create_comment(owner, repo, 12, result_body, request.request_id)
-            self._log(f"RESULT publié pour la requête {request.request_id} dans l'issue #12")
+            comment = self.client.create_comment(owner, repo, 12, result_body, request_id)
+            comment_id = comment.get("id")
+            self._log(f"RESULT publié pour {request_id} dans #12 (comment #{comment_id})")
+            return comment_id
 
         except Exception as exc:
-            self._log(f"échec de la publication de RESULT pour la requête {request.request_id}: {exc}")
+            self._log(f"échec de la publication de RESULT pour {request_id}: {exc}")
+            return None
 
     def _safe_heartbeat(self, request_id: str) -> None:
         """Heartbeat sécurisé pour une requête active — renouvelle le timestamp, ne lève pas FencedOut.
@@ -727,7 +954,8 @@ def main() -> None:
       OPENCODE_TIMEOUT_SECONDS — timeout d'exécution OpenCode
       POLL_SECONDS             — intervalle de polling
       HEARTBEAT_SECONDS        — intervalle heartbeat
-      JOURNAL_PATH             — chemin du journal de résultats
+      JOURNAL_PATH             — chemin du journal JSONL legacy (migré vers STATE_DB_PATH)
+      STATE_DB_PATH            — chemin de la base SQLite d'état (défaut: ~/.local/share/opencode-nuc-worker/state.db)
     """
     import os as _os
 
@@ -760,6 +988,9 @@ def main() -> None:
         allowed_repos_str = _os.environ.get("ALLOWED_REPOS", DEFAULT_GITHUB_REPO)
         allowed_repos = [r.strip() for r in allowed_repos_str.split(",") if r.strip()]
 
+        default_db_path = str(Path.home() / ".local/share/opencode-nuc-worker/state.db")
+        default_journal_path = str(Path.home() / ".local/share/opencode-nuc-worker/results.jsonl")
+
         config = WorkerConfig(
             github_token=github_token,
             github_api_url=_os.environ.get("GITHUB_API_URL", "https://api.github.com"),
@@ -771,22 +1002,24 @@ def main() -> None:
             opencode_timeout_seconds=int(
                 _os.environ.get("OPENCODE_TIMEOUT_SECONDS", str(DEFAULT_OPENCODE_TIMEOUT_SECONDS))
             ),
-            journal_path=_os.environ.get(
-                "JOURNAL_PATH",
-                str(Path.home() / ".local/share/opencode-nuc-worker/results.jsonl"),
-            ),
+            journal_path=_os.environ.get("JOURNAL_PATH", default_journal_path),
+            state_db_path=_os.environ.get("STATE_DB_PATH", default_db_path),
             allowed_repos=allowed_repos,
             allowed_authors=allowed_authors,
         )
 
-        journal = ResultsJournal(config.journal_path)
+        db = StateDB(config.state_db_path)
+        migrated = db.migrate_from_jsonl(config.journal_path)
+        if migrated:
+            print(f"[opencode-nuc-worker] migré {migrated} entrées JSONL → SQLite")
+
         executor = OpenCodeExecutor(
             bin_path=config.opencode_bin,
             workdir=config.opencode_workdir,
             timeout_seconds=config.opencode_timeout_seconds,
         )
         http = httpx.Client(timeout=30.0)
-        worker = OpenCodeNUCWorker(config, http, journal, executor)
+        worker = OpenCodeNUCWorker(config, http, db, executor)
         worker.run_forever()
 
     except KeyboardInterrupt:
