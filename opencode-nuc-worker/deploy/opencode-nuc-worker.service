@@ -1,0 +1,45 @@
+# opencode-nuc-worker.service (issue #29)
+# Worker permanent pour GitHub Agent Channel → OpenCode CLI sur NUC/WSL2.
+#
+# Installe (voir deploy/install-worker-nuc.sh):
+#   sudo ./deploy/install-worker-nuc.sh
+#
+# Prérequis (documentés dans docs/WORKER_NUC_WSL2.md) :
+#   * WSL2 avec systemd dans /etc/wsl.conf [boot] systemd=true
+#   * OpenCode CLI installé et non interactif (`opencode --version`)
+#   * Python 3.11+ avec support de venv
+#
+
+[Unit]
+Description=OpenCode NUC Worker (issue #29, GitHub Agent Channel processor)
+After=network-online.target
+Wants=network-online.target
+# Reprise après crash : le polling est idempotent et le lease GitHub expire.
+Documentation=https://github.com/tvnv/axon-orchestrator/issues/29
+
+[Service]
+Type=simple
+User=opencode-nuc-worker
+Group=opencode-nuc-worker
+WorkingDirectory=/opt/axon-orchestrator/opencode-nuc-worker
+EnvironmentFile=/etc/opencode-nuc-worker/worker.env
+ExecStart=/opt/axon-orchestrator/opencode-nuc-worker/.venv/bin/python -m opencode_nuc_worker.worker
+Restart=always
+RestartSec=10
+# Résilience NUC/WSL2 : systemd redémarre + expiration automatique des leases GitHub.
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=opencode-nuc-worker
+
+# Minimal hardening ; le worker a besoin de réseau et d'accès en écriture au workspace.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/opt/axon-orchestrator/opencode-nuc-worker /var/lib/opencode-nuc-worker /etc/opencode-nuc-worker
+
+[Install]
+WantedBy=multi-user.target
