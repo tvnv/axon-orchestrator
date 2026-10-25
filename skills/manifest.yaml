@@ -1,0 +1,16 @@
+schema_version: 1
+registry: tvnv/axon-orchestrator
+skills:
+  - id: wave-execution
+    version: 1.0.0
+    path: skills/wave-execution/v1/SKILL.md
+    issue: 7
+  - id: axon-validation
+    version: 1.0.0
+    path: skills/axon-validation/v1/SKILL.md
+    issue: 35
+entrypoints:
+  axon-execution: wave-execution@1.0.0
+  axon-validation: axon-validation@1.0.0
+# Future aliases tracked in #34, #36, #37.
+# No runtime registry service; cache bundles locally (#10).
